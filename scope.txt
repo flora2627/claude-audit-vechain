@@ -1,0 +1,11 @@
+packages/contracts/contracts/Stargate.sol
+packages/contracts/contracts/StargateNFT/StargateNFT.sol
+packages/contracts/contracts/StargateNFT/libraries/Clock.sol
+packages/contracts/contracts/StargateNFT/libraries/DataTypes.sol
+packages/contracts/contracts/StargateNFT/libraries/Errors.sol
+packages/contracts/contracts/StargateNFT/libraries/Levels.sol
+packages/contracts/contracts/StargateNFT/libraries/MintingLogic.sol
+packages/contracts/contracts/StargateNFT/libraries/Settings.sol
+packages/contracts/contracts/StargateNFT/libraries/Token.sol
+packages/contracts/contracts/StargateNFT/libraries/TokenManager.sol
+packages/contracts/contracts/StargateProxy.sol
