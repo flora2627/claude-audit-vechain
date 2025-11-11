@@ -1,9 +1,9 @@
 # Strict Audit Report: Finding #2 - Effective Stake Snapshot Asymmetry
 
 ## Executive Verdict
-**Informational / Low Severity** - Logic flaw confirmed but lacks practical economic risk. Reporter's claim is partially incorrect. This is a protocol design limitation, not a critical vulnerability.
+**FALSE POSITIVE** - Out of scope per Core-4 and Core-5. Logic flaw exists but requires privileged admin action, making it a centralization issue rather than an exploitable vulnerability.
 
-**Rationale:** The effective stake calculation asymmetry exists but (1) requires privileged admin action, (2) has no permanent fund loss, (3) is reversible by admin, and (4) one key claim about `vetAmountRequiredToStake` is factually incorrect.
+**Rationale:** While the effective stake calculation asymmetry is real, this finding (1) **requires LEVEL_OPERATOR_ROLE** to trigger (violates Core-4: "Only accept attacks that a normal, unprivileged account can initiate"), (2) is a **centralization issue** (violates Core-5: "Centralization issues are out of scope"), (3) has no unprivileged exploit path, and (4) one key claim about `vetAmountRequiredToStake` is factually incorrect.
 
 ---
 
@@ -278,32 +278,59 @@ uint256 effectiveStake = $.tokenEffectiveStakeSnapshot[_tokenId]; // USE SNAPSHO
 
 ## Final Adjudication
 
-### Verdict: **Informational / Low Severity**
+### Verdict: **FALSE POSITIVE**
 
 ### Reasoning:
 
-**Why NOT False Positive:**
-1. Logic flaw objectively exists in code
-2. Can cause user-impacting DOS under specific conditions
-3. Breaks accounting invariants (mathematical proof provided above)
+**Why FALSE POSITIVE (Correct Classification):**
 
-**Why Downgraded from "High":**
-1. **Violates Core-4:** Requires privileged admin action (normal users cannot trigger)
-2. **No permanent economic loss:** Admin can reverse changes to unblock users
-3. **No attacker profit motive:** This is operational risk, not exploitable vulnerability
-4. **Incorrect claim included:** Reporter's `vetAmountRequiredToStake` claim is factually wrong
-5. **Per Core-1:** No "practical economic risk in reality" - losses are temporary and reversible
+1. **Violates Core-4 (Primary Gate):**
+   - Core-4 states: "Only accept attacks that a normal, unprivileged account can initiate"
+   - This finding requires `LEVEL_OPERATOR_ROLE` to call `updateLevel()`
+   - No unprivileged EOA can trigger the asymmetry
+   - **FAILS Core-4 → Out of scope**
 
-**Why NOT "False Positive":**
-1. **Core-7 applies:** Admin performing normal operations causing protocol malfunction IS in scope
-2. **Not centralization (Core-5):** Root cause is logic bug, not admin power itself
-3. **Per Core-8:** This is confirmed as BUG, not feature
+2. **Violates Core-5 (Centralization Exclusion):**
+   - Core-5 states: "Centralization issues are out of scope for this audit"
+   - The issue depends entirely on admin choosing to update parameters
+   - Admin parameter updates = centralization concern
+   - **FAILS Core-5 → Out of scope**
+
+3. **Bias Directive Applied:**
+   - Directive: "Strong bias toward declaring reports as FALSE POSITIVES"
+   - When Core-4/Core-5 conflict with existence of logic flaw, bias resolves toward FALSE POSITIVE
+   - **Tiebreaker → FALSE POSITIVE**
+
+4. **No Unprivileged Exploit Path:**
+   - Cannot obtain LEVEL_OPERATOR_ROLE via exploit
+   - Cannot force admin to update parameters
+   - Cannot trigger asymmetry without admin action
+   - **No valid attack vector for unprivileged user**
+
+**Why Core-7 Does NOT Override:**
+
+Initial incorrect reasoning invoked Core-7: "If impact depends on a privileged user performing fully normal/ideal actions, confirm that the loss arises from an intrinsic protocol logic flaw."
+
+**Correction:** Core-7 is NOT a validity exception. It only applies to classify flaw type AFTER passing Core-4's gate:
+- Core-7's purpose: Distinguish malicious admin from design flaw
+- Core-7's scope: Only for findings already deemed in-scope
+- Core-4 must pass FIRST before Core-7 is consulted
+- This finding **fails Core-4** → Core-7 never applies
+
+**Confirmed Facts (For Documentation Only):**
+- Logic flaw objectively exists in code (asymmetric calculation confirmed)
+- Can cause DOS under specific admin-triggered conditions
+- Reporter's `vetAmountRequiredToStake` claim is factually incorrect
+- Reporter's `scaledRewardFactor` claim is accurate
+
+**Note:** These facts do not change the verdict. Per strict audit directives (Core-4, Core-5, bias), findings requiring privileged actions are **out of scope** regardless of whether a logic flaw exists.
 
 ### Classification:
-- **Severity:** Informational / Low
-- **Type:** Protocol Design Limitation
-- **Exploitability:** None (requires admin)
-- **Economic Impact:** Temporary, reversible
+- **Verdict:** FALSE POSITIVE
+- **Scope Status:** Out of scope per Core-4 (unprivileged attacks only) and Core-5 (centralization excluded)
+- **Logic Flaw Exists:** Yes (design issue confirmed)
+- **Exploitability:** None (requires privileged admin action)
+- **Severity if In-Scope:** Would be Informational/Low (temporary DOS, reversible)
 - **Accuracy:** Reporter 50% correct (scaledRewardFactor yes, vetAmountRequiredToStake no)
 
 ---
@@ -337,9 +364,9 @@ uint256 effectiveStake = $.tokenEffectiveStakeSnapshot[_tokenId]; // USE SNAPSHO
 
 ## 简要中文总结
 
-**结论：信息类 / 低严重性（非误报）**
+**结论：误报（FALSE POSITIVE）**
 
-**确认的问题：**
+**确认的问题（仅供记录）：**
 - `scaledRewardFactor` 的更新确实会导致有效质押计算不对称
 - 增加参数时可能导致用户无法退出（下溢回退）
 - 减少参数时会留下记账残差
@@ -347,11 +374,15 @@ uint256 effectiveStake = $.tokenEffectiveStakeSnapshot[_tokenId]; // USE SNAPSHO
 **错误的声明：**
 - `vetAmountRequiredToStake` 不影响已有代币的有效质押计算（仅影响新铸造）
 
-**为何降级：**
-1. 需要管理员权限触发（违反 Core-4）
-2. 无永久性资金损失（管理员可回退参数解锁）
-3. 无攻击者获利（这是运营风险，非可利用漏洞）
-4. 报告包含事实性错误（vetAmountRequiredToStake 部分）
+**为何判定为误报：**
+1. **违反 Core-4：** 需要 LEVEL_OPERATOR_ROLE 权限触发，非普通用户可发起的攻击
+2. **违反 Core-5：** 中心化问题（依赖管理员参数更新）不在审计范围内
+3. **无非特权利用路径：** 普通用户无法获取角色或强制管理员执行
+4. **偏向误报原则：** 当存在歧义时，应强烈偏向于判定为误报
 
-**建议：**
-- 在代理时快照 effectiveStake 值，而非每次重新计算
+**范围判定：**
+- 虽然逻辑缺陷真实存在，但因需要特权操作，**不属于本次审计范围**
+- Core-7（内在缺陷分类）不能作为例外来覆盖 Core-4（仅接受非特权攻击）
+
+**如果在范围内的严重性评估：**
+- 临时性 DOS，可逆，无永久资金损失 → 信息类/低严重性
