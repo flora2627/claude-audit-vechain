@@ -177,6 +177,188 @@ In protocols where NFTs represent staking positions (e.g., Uniswap V3, this VeCh
 
 ---
 
+
+## 🔁 False Positive Reflection: Finding #2 - "Effective Stake Snapshot Asymmetry"
+
+### Wrong Prior Assumptions
+
+1. **Over-Weighted "Intrinsic Flaw" Exception:** I incorrectly interpreted Core-7 ("If impact depends on a privileged user performing fully normal/ideal actions, confirm that the loss arises from an intrinsic protocol logic flaw") as a LOOPHOLE that makes privileged-action findings valid.
+
+2. **Misinterpreted Core-7's Purpose:** Core-7 is NOT about making privileged findings valid; it's about CLASSIFICATION (is it malice or design flaw?). I should have:
+   - First applied Core-4 (unprivileged only) → REJECT
+   - Then IF kept, use Core-7 to determine flaw type
+   - But Core-4 should have rejected it outright
+
+3. **Created False Exception Logic:** I reasoned: "Admin doing normal ops + intrinsic flaw = valid finding"
+   - This contradicts Core-4: "Only accept attacks that a normal, unprivileged account can initiate"
+   - Core-5: "Centralization issues are out of scope"
+   - **Bias directive:** "Strong bias toward declaring reports as FALSE POSITIVES"
+
+4. **Ignored Directive Priority:** When facing ambiguity between Core-4/Core-5 (reject privileged) vs Core-7 (classify flaw type), I should have applied the "strong bias toward false positive" tiebreaker and rejected.
+
+### Why It Led to Failure
+
+**Logic Chain Flaw:**
+```
+❌ My Reasoning:
+1. Requires admin to update scaledRewardFactor (privileged action)
+2. BUT admin is doing "normal operations" (Core-7 applies)
+3. AND there's an intrinsic protocol design flaw
+4. THEREFORE: Valid finding, just downgraded to "Informational/Low"
+→ CONCLUSION: NOT a false positive
+
+✅ Correct Strict Reasoning:
+1. Requires admin with LEVEL_OPERATOR_ROLE (privileged account)
+2. Core-4: "Only accept attacks that a normal, unprivileged account can initiate"
+3. This FAILS Core-4 criterion
+4. Core-5: "Centralization issues are out of scope"
+5. Admin role dependency = centralization issue
+6. "Strong bias toward FALSE POSITIVES" when ambiguous
+→ CONCLUSION: FALSE POSITIVE (out of scope per Core-4 + Core-5)
+```
+
+**Root Error:** I treated Core-7 as an override to Core-4, when it should only apply AFTER passing Core-4's gate.
+
+### What Pattern Failed
+
+**Failed Pattern:** "Escalation Exception Matching"
+- I saw "design flaw" + "user impact" and escalated from "out of scope" to "valid but low severity"
+- Correct strict pattern: **Gating Rules First** (Core-4, Core-5) → if fails, stop; don't escalate
+
+**Heuristic Shortcut Error:**
+- Shortcut: "Real logic bug exists → must classify it somehow → downgrade severity but keep as valid"
+- Correct: "Real logic bug exists BUT out of scope → classify as FALSE POSITIVE with explanation"
+
+---
+
+## 🧠 Prior Knowledge Update: Finding #2
+
+### Rule 5: Strict Privilege Gating (Core-4 Enforcement)
+
+**Updated Rule:** When a finding requires ANY privileged account action to trigger:
+1. **FIRST** check Core-4: "Only accept attacks that a normal, unprivileged account can initiate"
+2. If requires privilege → **STOP** → Classify as FALSE POSITIVE
+3. **DO NOT** proceed to severity assessment
+4. **DO NOT** invoke Core-7 as an exception
+
+**Privileged Actions Include:**
+- Admin/operator role functions (LEVEL_OPERATOR_ROLE, DEFAULT_ADMIN_ROLE, etc.)
+- Governance proposals or votes
+- Multisig actions
+- Oracle updates controlled by specific addresses
+- Whitelisted addresses performing restricted operations
+
+**Exception Criteria (very narrow):**
+- Privilege obtained through EXPLOIT (e.g., role theft via reentrancy) → Valid
+- Normal user can FORCE privileged user to act (e.g., griefing admin) → Valid
+- Privileged action is REQUIRED by protocol design (e.g., periodic oracle update) AND attacker can front-run → Valid
+
+**Counter-Example (Finding #2):**
+- Admin updates `scaledRewardFactor` → voluntary admin action
+- No exploit to obtain LEVEL_OPERATOR_ROLE
+- No way for user to force admin to update
+- **Result:** FALSE POSITIVE per Core-4
+
+### Rule 6: Core-7 Is Not an Override
+
+**Corrected Understanding of Core-7:**
+> "If impact depends on a privileged user performing fully normal/ideal actions, confirm that the loss arises from an intrinsic protocol logic flaw."
+
+**What Core-7 Actually Means:**
+- **Purpose:** Distinguish malicious admin from design flaw (classification aid)
+- **Scope:** Only applies to findings ALREADY deemed in-scope by other criteria
+- **NOT a validity gate:** Doesn't make privileged findings valid
+
+**Correct Application:**
+```
+IF (requires privilege) THEN
+  Check Core-4: "Only unprivileged attacks"
+  → FAILS Core-4
+  → FALSE POSITIVE
+  → [STOP - don't even use Core-7]
+ELSE IF (unprivileged exploit exists) THEN
+  Assess severity using other cores
+  IF (privileged user interaction needed as victim) THEN
+    Use Core-7: Is admin malicious or normal?
+    → If normal: intrinsic flaw (valid finding)
+    → If malicious: out of scope (admin attack)
+  END IF
+END IF
+```
+
+## 📍 Checkpoint for Future: Privileged Action Audit Protocol
+
+When auditing findings that involve admin/privileged actions:
+
+### Phase 1: Privilege Gate Check (FIRST - Don't Skip!)
+```
+□ Does the finding require ANY privileged account action?
+  ✓ Admin role functions
+  ✓ Governance votes
+  ✓ Whitelisted addresses
+  ✓ Owner-only functions
+
+IF YES → Proceed to Phase 2
+IF NO → Skip to normal severity assessment
+```
+
+### Phase 2: Privilege Legitimacy Assessment
+```
+□ How did attacker obtain privilege?
+  ✓ Via exploit (role theft, signature forgery) → VALID, proceed
+  ✓ Assumed to have role (not obtained via exploit) → INVALID, go to Phase 3
+
+□ Can unprivileged user FORCE privileged user to act?
+  ✓ YES (griefing, front-running required action) → VALID, proceed
+  ✓ NO (voluntary admin action) → INVALID, go to Phase 3
+```
+
+### Phase 3: Strict Rejection (Apply Core-4, Core-5)
+```
+□ Core-4 Check: "Only accept attacks that a normal, unprivileged account can initiate"
+  ✓ Requires privilege WITHOUT exploit → FAILS Core-4
+
+□ Core-5 Check: "Centralization issues are out of scope"
+  ✓ Depends on admin role actions → Centralization issue
+
+□ Bias Directive: "Strong bias toward FALSE POSITIVES"
+  ✓ When ambiguous → Favor FALSE POSITIVE
+
+→ VERDICT: FALSE POSITIVE
+→ REASON: "Requires privileged action (out of scope per Core-4 & Core-5)"
+```
+
+### Phase 4: Documentation (Even for False Positives)
+```
+□ Note the logic flaw exists (for completeness)
+□ Explain WHY it's out of scope (cite Core-4, Core-5)
+□ Do NOT downgrade to "Informational/Low" (that implies validity)
+□ Correct classification: FALSE POSITIVE with detailed reasoning
+```
+
+### Decision Tree for Finding #2 (Corrected)
+```
+1. Requires LEVEL_OPERATOR_ROLE to update parameters?
+   → YES
+
+2. Can unprivileged user obtain this role via exploit?
+   → NO (role is access-controlled)
+
+3. Can user force admin to update parameters?
+   → NO (admin voluntary action)
+
+4. Apply Core-4: "Only unprivileged attacks"
+   → FAILS
+
+5. Apply Core-5: "Centralization out of scope"
+   → Admin parameter updates = centralization
+
+6. Apply Bias: "Strong bias toward FALSE POSITIVE"
+   → Confirms rejection
+
+→ FINAL VERDICT: FALSE POSITIVE
+```
+=======
 ## 🔁 False Positive Reflection: Finding #3 - "Integer Division Dust Accumulation"
 
 ### Wrong Prior Assumptions
@@ -464,17 +646,6 @@ userShare = (userStake * totalReward) / totalStake;
 - Economic impact < gas costs
 
 **Rule of Thumb:** If OpenZeppelin's reference implementation has the same "issue," it's not an issue - it's a feature.
-
----
-
-## 📊 Statistics
-
-- **Total Findings Reviewed:** 3
-- **False Positives Identified:** 2 (66.7%)
-- **Common Root Causes:**
-  - Incomplete call chain tracing (33.3%)
-  - Economic materiality not assessed (33.3%)
-  - Industry standard pattern not checked (33.3%)
 
 ---
 
