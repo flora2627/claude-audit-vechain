@@ -649,5 +649,362 @@ userShare = (userStake * totalReward) / totalStake;
 
 ---
 
+## 🔁 False Positive Reflection: Finding #7 - "UNKNOWN Validator Status Residual Stake"
+
+### Wrong Prior Assumptions
+
+1. **Unverified Precondition Assumption**: The reporter assumed validators can transition from ACTIVE to UNKNOWN status without proving this actually occurs in the VeChain protocol. Treated an unverified assumption as established fact.
+
+2. **Code Comment as Evidence**: Saw comments mentioning "exited or unknown" (lines 264, 396) and treated this as evidence that UNKNOWN transitions occur in production, rather than recognizing it could be overly-defensive coding for edge cases that never happen.
+
+3. **POC Test as Sufficient Proof**: Created a POC demonstrating the bug logic works IF the precondition occurs, but didn't prove the precondition itself can occur. Conflated "the code path exists" with "the vulnerability is exploitable."
+
+4. **Incomplete State Machine Understanding**: Didn't investigate what UNKNOWN (status=0) actually represents:
+   - Is it a default/uninitialized value?
+   - Is it a valid runtime state transition?
+   - Does the protocol ever set active validators to UNKNOWN?
+   - Just saw "status=0" existed and assumed it could happen.
+
+5. **Reporter Admitted Uncertainty But Still Confirmed**: The finding explicitly states "需从链上事件中提取验证者状态切换（active→unknown）的真实频率" and "建议运维侧提供实际 ProtocolStaker 状态机说明" - admitting the precondition is unverified - yet still classified as "Confirmed / Loss."
+
+### Why It Led to Failure
+
+- **Conflated Code Existence with Exploitability:** "Bug logic exists in code" ≠ "Bug is exploitable in production"
+- **Skipped Real-World Verification:** Never checked if ACTIVE → UNKNOWN transitions actually occur
+- **Ignored Status Semantics:** UNKNOWN = 0 is the default uint8 value, likely means "never registered," not an active runtime state
+- **Assumed Lifecycle Without Evidence:** Expected lifecycle is QUEUED (1) → ACTIVE (2) → EXITED (3); backwards transition to UNKNOWN (0) is unnatural
+- **Defensive Code Misinterpretation:** `_getDelegationStatus()` checks UNKNOWN defensively, but this doesn't prove it occurs (similar to checking division-by-zero in mathematically impossible scenarios)
+
+### Logic Chain Flaw
+
+```
+❌ Flawed Logic:
+1. Comment says "validator is exited or unknown"
+2. Code only checks VALIDATOR_STATUS_EXITED, not UNKNOWN
+3. POC shows delegatorsEffectiveStake not decremented if UNKNOWN occurs
+4. This breaks accounting invariant (reward conservation)
+5. Therefore: vulnerability confirmed
+→ CONCLUSION: Confirmed / Loss
+
+✅ Correct Logic:
+1. Comment says "validator is exited or unknown"
+2. Code only checks VALIDATOR_STATUS_EXITED (inconsistency confirmed ✓)
+3. POC shows bug would work IF UNKNOWN occurs (logic defect confirmed ✓)
+4. BUT: Can validators become UNKNOWN in production?
+   - UNKNOWN = 0 (default uint8 value, not a natural runtime state)
+   - Expected lifecycle: QUEUED → ACTIVE → EXITED (no backward transition)
+   - No tests/docs showing ACTIVE → UNKNOWN transitions
+   - No integration tests with real ProtocolStaker demonstrating this
+   - Initial delegation check (lines 350-356) prevents delegating to UNKNOWN validators
+   - Reporter admits: "建议运维侧提供实际 ProtocolStaker 状态机说明"
+5. Precondition is UNPROVEN - burden of proof not met
+6. Core-4: Attacker cannot cause validator to become UNKNOWN (protocol-level)
+7. Core-6: Attack path requires external state change beyond attacker control
+→ CONCLUSION: FALSE POSITIVE (theoretical bug without demonstrated real-world occurrence)
+```
+
+**Key Mistake:** The reporter jumped from "code inconsistency exists" directly to "vulnerability confirmed" without the critical middle step: "prove the triggering condition can occur."
+
+---
+
+## 🧠 Prior Knowledge Update
+
+### Rule 9: Precondition Verification is Mandatory (Core Directive)
+
+**Updated Rule:** When a finding depends on a specific precondition, you MUST verify the precondition can occur before classifying as valid:
+
+1. **Identify Critical Preconditions:**
+   - What external state changes must occur?
+   - What protocol behaviors must happen?
+   - What assumptions are being made about system state?
+
+2. **Prove Precondition Occurrence:**
+   - Search for integration tests demonstrating the scenario
+   - Find documentation specifying the behavior
+   - Locate chain events showing it has occurred
+   - Verify with protocol specifications
+   - Check if defensive code exists for this case in other functions
+
+3. **Burden of Proof:**
+   - Reporter must PROVE precondition can occur, not just assume it
+   - "Code path exists" ≠ "Code path is reachable in production"
+   - Unproven preconditions → FALSE POSITIVE per "strong bias" directive
+
+4. **Red Flags for Unproven Preconditions:**
+   - Reporter admits uncertainty ("需要更多数据", "建议提供说明")
+   - No tests in codebase demonstrating the scenario
+   - No documentation mentioning the state transition
+   - Precondition involves backward/unexpected state transitions
+   - Default/uninitialized values treated as active runtime states
+
+**When to Accept Preconditions:**
+- ✅ Documented protocol behavior
+- ✅ Demonstrated in integration tests
+- ✅ Observable in chain events/transactions
+- ✅ Follows natural state machine progression
+- ✅ Multiple code paths handle the condition (suggests it's common)
+
+**When to Reject (FALSE POSITIVE):**
+- ❌ No evidence in codebase or documentation
+- ❌ Reporter admits uncertainty
+- ❌ Precondition involves unnatural state transitions
+- ❌ Only defensive code handles it (suggests edge case)
+- ❌ Violates Core-4 (requires protocol-level changes) or Core-6 (not attacker-controlled)
+
+### Rule 10: Default Values ≠ Active Runtime States
+
+**Updated Rule:** Distinguish between default/uninitialized values and valid runtime state transitions:
+
+**Default Values (uint8, address, bool):**
+- `uint8 status = 0` → UNKNOWN/uninitialized, not a valid runtime state
+- `address validator = address(0)` → null/unset, not a valid address
+- `bool initialized = false` → not yet set up
+- These typically represent "never set" or "cleared from storage," not active states
+
+**Valid Runtime States:**
+- Explicitly assigned non-zero values
+- Part of documented state machine progression
+- Tested in integration tests
+- Have explicit setter functions (not just default initialization)
+
+**Analysis Pattern:**
+```solidity
+// Example: Validator Status
+uint8 private constant VALIDATOR_STATUS_UNKNOWN = 0;  // ← Default value
+uint8 private constant VALIDATOR_STATUS_QUEUED = 1;   // ← First active state
+uint8 private constant VALIDATOR_STATUS_ACTIVE = 2;   // ← Normal operation
+uint8 private constant VALIDATOR_STATUS_EXITED = 3;   // ← Terminal state
+```
+
+**Expected Lifecycle:** QUEUED (1) → ACTIVE (2) → EXITED (3)
+
+**UNKNOWN (0) Most Likely Means:**
+- Validator never registered
+- Storage slot uninitialized
+- Validator completely removed from protocol records (storage wiped)
+- NOT: Active validator transitioning backward to "unknown"
+
+**Verification Steps:**
+1. Check if there's a setter function that assigns the default value
+2. Search for tests showing transition TO the default value
+3. Verify if protocol clears storage (sets to 0) or uses explicit states
+4. Look for documentation about the default state's meaning
+
+**Counter-Example (Finding #7):**
+- No function sets validator status to UNKNOWN (0)
+- No tests showing ACTIVE → UNKNOWN transition
+- Natural lifecycle progresses FORWARD (increasing status values)
+- Defensive check in one function doesn't prove it's common
+
+### Rule 11: Code Comments ≠ Runtime Behavior
+
+**Updated Rule:** Code comments describe intent, not necessarily reality. Verify actual behavior independently:
+
+**Types of Comments:**
+1. **Accurate Comments:** Match implementation exactly
+2. **Aspirational Comments:** Describe intended future behavior
+3. **Defensive Comments:** Over-specify conditions "just in case"
+4. **Stale Comments:** Outdated after refactoring
+
+**When Comments Suggest Unproven Behavior:**
+```solidity
+// Comment: "if the delegation is pending or the validator is exited or unknown"
+if (
+    currentValidatorStatus == VALIDATOR_STATUS_EXITED ||  // ❌ Missing UNKNOWN check
+    delegation.status == DelegationStatus.PENDING
+) {
+    // ...
+}
+```
+
+**Analysis Required:**
+1. Comment says "A or B or C"
+2. Code checks "A or B" (missing C)
+3. **Don't conclude:** "C must be possible because comment mentions it"
+4. **Do investigate:**
+   - Can C actually occur in production?
+   - Is this a stale comment?
+   - Is this defensive/aspirational coding?
+   - Are there tests for condition C?
+
+**Red Flags:**
+- Comment is more defensive than implementation
+- Other functions DON'T handle the condition
+- No tests for the condition
+- Condition violates natural state progressions
+
+**Correct Approach:**
+- Treat comment-code mismatch as code quality issue ✓
+- Verify independently if condition can occur
+- If unproven → Fix comment OR add check (defensive coding)
+- If proven → Legitimate bug
+
+---
+
+## 📍 Checkpoint for Future: Unproven Precondition Audit Protocol
+
+When a finding depends on a specific system state or condition:
+
+### Phase 1: Precondition Identification (MANDATORY FIRST STEP)
+```
+□ List ALL preconditions required for the attack/bug to occur
+□ Identify which preconditions are:
+  ✓ User-controlled (attacker actions)
+  ✓ Protocol-controlled (system state changes)
+  ✓ Time-based (block numbers, timestamps)
+  ✓ Economic (price movements, liquidity)
+□ Mark protocol-controlled preconditions for verification
+```
+
+### Phase 2: Evidence Search (DON'T SKIP!)
+```
+□ Search integration tests for the scenario
+  - Grep for state transition keywords
+  - Check test files for precondition setup
+
+□ Search documentation:
+  - Protocol specs
+  - State machine diagrams
+  - Architecture docs
+  - ADRs (Architecture Decision Records)
+
+□ Search codebase for setter functions:
+  - Can status be set to the value?
+  - Are there explicit state transition functions?
+
+□ Check defensive code patterns:
+  - How many functions handle this condition?
+  - Is it handled universally or just in one place?
+
+□ Look for natural state progression:
+  - Does the precondition follow expected lifecycle?
+  - Or does it require backward/unexpected transitions?
+```
+
+### Phase 3: Semantic Analysis of Default Values
+```
+□ If precondition involves value 0:
+  ✓ Is this the default uint/address/bool value?
+  ✓ Does it mean "uninitialized" rather than active state?
+  ✓ Is there a setter function that assigns 0?
+  ✓ Do tests show transitions TO value 0?
+
+□ If precondition involves state transitions:
+  ✓ What's the expected lifecycle progression?
+  ✓ Does this transition go BACKWARD?
+  ✓ Is there an explicit state machine?
+```
+
+### Phase 4: Reporter Uncertainty Check
+```
+□ Does reporter admit uncertainty?
+  ✓ "需要更多数据" / "need more data"
+  ✓ "建议提供说明" / "recommend clarification"
+  ✓ "待补数据" / "pending data verification"
+  ✓ "未确认" / "unconfirmed"
+
+IF YES → Strong signal of unproven precondition
+         → Apply "strong bias toward FALSE POSITIVE"
+```
+
+### Phase 5: Core Directive Application
+```
+□ Core-4: Can unprivileged account cause precondition?
+  IF NO → Likely FALSE POSITIVE
+
+□ Core-6: Is precondition 100% attacker-controlled on-chain?
+  IF NO → Likely FALSE POSITIVE
+
+□ Core-7: If privileged action, is impact from intrinsic flaw?
+  (Only relevant if Core-4/Core-6 passed)
+
+□ Bias Directive: "Strong bias toward FALSE POSITIVE"
+  When precondition is ambiguous/unproven → REJECT
+```
+
+### Phase 6: Verdict Decision Tree
+```
+IF precondition_proven = TRUE (tests/docs/events exist) THEN
+  IF attacker_can_control = TRUE THEN
+    → Proceed to normal vulnerability assessment
+  ELSE
+    → FALSE POSITIVE (Core-4/Core-6 violation)
+  END IF
+ELSE IF precondition_proven = FALSE (no evidence) THEN
+  IF reporter_admits_uncertainty = TRUE THEN
+    → FALSE POSITIVE (unproven assumption)
+  ELSE
+    → Investigate more, but lean FALSE POSITIVE per bias directive
+  END IF
+ELSE IF precondition = default_value (0, address(0), false) THEN
+  IF backward_state_transition = TRUE THEN
+    → Likely FALSE POSITIVE (unnatural lifecycle)
+  END IF
+END IF
+```
+
+### Phase 7: Classification Output
+```
+IF precondition unproven:
+  □ Verdict: FALSE POSITIVE
+  □ Reason: "Unproven precondition - reporter has not demonstrated that [condition] can occur in production"
+  □ Evidence: "No integration tests, no documentation, reporter admits uncertainty"
+  □ Recommendation: "Code quality issue - fix comment-code mismatch defensively, but not a security vulnerability"
+
+IF precondition proven BUT attacker cannot control:
+  □ Verdict: FALSE POSITIVE
+  □ Reason: "Violates Core-4/Core-6 - precondition requires protocol-level changes beyond attacker control"
+```
+
+---
+
+## 🎯 Key Takeaway for Next Audit: Precondition Burden of Proof
+
+**Before accepting a finding with external preconditions:**
+
+1. **Precondition Proof Checklist:**
+   - [ ] Integration tests demonstrate the scenario
+   - [ ] Documentation specifies the behavior
+   - [ ] Chain events/transactions show historical occurrence
+   - [ ] Multiple code paths handle the condition
+   - [ ] State transition follows natural lifecycle
+   - [ ] Reporter provides concrete evidence (not assumptions)
+
+2. **Red Flags for Unproven Preconditions:**
+   - Reporter admits uncertainty in the finding
+   - Only one defensive function handles the condition
+   - Involves default values (0, address(0), false)
+   - Requires backward/unexpected state transitions
+   - No tests or documentation found
+   - Violates Core-4 (privilege required) or Core-6 (not attacker-controlled)
+
+3. **Strong Bias Application:**
+   - When precondition is ambiguous → FALSE POSITIVE
+   - When evidence is missing → FALSE POSITIVE
+   - When reporter uncertain → FALSE POSITIVE
+   - Burden of proof is on REPORTER, not auditor
+
+4. **Code Quality vs Security:**
+   - Code inconsistency (comment ≠ implementation) → Quality issue ✓
+   - Unproven precondition → Not a security vulnerability ✗
+   - Recommendation: Fix defensively even if condition never occurs
+   - Classification: FALSE POSITIVE with recommendation to improve code
+
+**Example (Finding #7):**
+- ✅ Code inconsistency exists (comment says "unknown", code doesn't check)
+- ✅ POC demonstrates logic defect
+- ❌ No proof validators can become UNKNOWN
+- ❌ Reporter admits uncertainty ("建议运维侧提供实际 ProtocolStaker 状态机说明")
+- ❌ UNKNOWN = 0 (default value, not active runtime state)
+- → **FALSE POSITIVE**: Theoretical bug without real-world occurrence
+
+**Rule of Thumb:**
+- "Code path exists" ≠ "Code path is reachable"
+- "Comment mentions X" ≠ "X can occur"
+- "POC works if Y" ≠ "Y happens in production"
+- **Prove the precondition or reject the finding.**
+
+---
+
 *Last Updated: 2025-11-11*
 *Audit Target: VeChain Stargate Staking Protocol*
